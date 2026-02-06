@@ -8,11 +8,17 @@ typedef enum {
   UP,
   RIGHT,
   START,
+  TICK,
 } menu_action;
 
 typedef void (*menu_func)(menu_action);
 
+void menu_none(menu_action);
+void main_menu(menu_action);
 void eeprom_display(menu_action);
+void tv5725_display(menu_action);
+
+static __xdata menu_func menu;
 
 // must return 0!
 unsigned char _sdcc_external_startup(void) {
@@ -49,6 +55,8 @@ unsigned char _sdcc_external_startup(void) {
 
   EA = 1;
 
+  menu = main_menu;
+
   return 0;
 }
 
@@ -74,11 +82,11 @@ uint32_t read_tick(void) __naked {
 }
 
 void main() {
-  __xdata menu_func menu = eeprom_display;
+  static __xdata uint32_t last_ms;
   __xdata uint8_t last_buttons = 0;
   __xdata uint8_t held = 0;
-  __xdata uint32_t last_ms = read_tick();
 
+  last_ms = read_tick();
   osd_init();
   init_TV5725();
 
@@ -113,6 +121,8 @@ void main() {
           menu(LEFT+i);
       }
       held = last_buttons;
+
+      menu(TICK);
 
       last_ms += 500;
       LED = !LED;
@@ -195,7 +205,11 @@ void IE1_isr(void) __interrupt(IE1_VECTOR) {
 void eeprom_display(menu_action action) {
   __xdata static uint16_t address = 0;
 
-  if (action == LEFT) address -= 0x70;
+  if (action == LEFT) {
+    menu = main_menu;
+    main_menu(START);
+    return;
+  }
   else if (action == RIGHT) address += 0x70;
   else if (action == UP) address -= 8;
   else if (action == DOWN) address += 8;
@@ -208,14 +222,145 @@ void eeprom_display(menu_action action) {
   else return;
 
   for (uint8_t y=1; y < 15; y++) {
+    __xdata uint8_t buf[8];
+
     address &= 0x0FFF;
     osd_show_hex4(0, y, 6, address);
+    EEPROM_read_from(buf, address, 8);
+    address += 8;
     for (uint8_t x=0; x < 8; x++) {
-      uint8_t data = EEPROM_read_byte(address);
-      osd_show_hex2(6+x*3, y, 7, data);
-      ++address;
+      osd_show_hex2(6+x*3, y, 7, buf[x]);
     }
   }
   address -= 0x70;
   osd_enable(1);
 }
+
+typedef struct {
+  uint8_t bank;
+  uint8_t reg_begin;
+  uint8_t rows;
+  __code const char* name;
+} tv5725_chapter;
+
+static const tv5725_chapter chapters[] = {
+  { 0, 0, 6, "Status"},
+  { 1, 0, 6, "Input Formatter"},
+  { 2, 0, 8, "Deinterlace"},
+  { 1, 0x30, 6, "HD Bypass"},
+  { 0, 0x40, 4, "Miscellaneous"},
+  { 4, 0, 4, "Memory"},
+  { 4, 0x20, 5, "Capture & Playback"},
+  { 4, 0x40, 4, "Read & Write Fifo"},
+  { 3, 0, 14, "Video Processor"},
+  { 0, 0x90, 2, "OSD"},
+  { 1, 0x60, 6, "Mode Detect"},
+  { 5, 0, 4, "ADC"},
+  { 5, 0x20, 10, "Sync Proc"}
+};
+
+void tv5725_display(menu_action action) {
+  static __code tv5725_chapter* __xdata page = &chapters[0];
+
+  if (action == UP) {
+    if (page == &chapters[0])
+      page = &chapters[12];
+    else
+      --page;
+    osd_clear();
+  } else if (action == DOWN) {
+    if (page == &chapters[12])
+      page = &chapters[0];
+    else
+      ++page;
+    osd_clear();
+  } else if (action == LEFT) {
+    menu = main_menu;
+    main_menu(START);
+    return;
+  } else if (action == RIGHT) {
+    // move a highlight??
+    return;
+  } else if (action == START) {
+    osd_clear();
+  }
+
+  // set bank
+  TV5725_write(&page->bank, 0xF0, 1);
+  uint8_t reg = page->reg_begin;
+  osd_show_string(2, 0, 3, page->name);
+
+  for (uint8_t y = 1; y <= page->rows; y++) {
+    __xdata uint8_t buf[8];
+
+    TV5725_read(buf, reg, 8);
+    osd_show_hex2(2, y, 6, reg);
+    osd_show_char(4, y, 6, ':');
+    for (uint8_t x = 0; x < 8; x++) {
+      osd_show_hex2(6+x*3, y, 7, buf[x]);
+    }
+    reg += 8;
+  }
+  osd_enable(1);
+}
+
+void main_menu(menu_action action) {
+  static __xdata uint8_t timeout;
+  static __xdata uint8_t active = 1;
+  const uint8_t max_active = 3;
+
+  switch (action) {
+    case TICK: // reduce timeout
+      if (--timeout != 0)
+        return;
+      // fallthrough to close after timeout
+    case LEFT: // close
+      menu = menu_none;
+      menu_none(START);
+      return;
+    case DOWN:
+      if (active == max_active)
+        active = 1;
+      else
+        ++active;
+      break;
+    case UP:
+      if (active == 1)
+        active = max_active;
+      else
+        --active;
+      break;
+    case RIGHT: // open new menu
+      if (active == 1) {
+        menu = eeprom_display;
+      } else if (active == 2) {
+        menu = tv5725_display;
+      } else { // active == 3
+        EEPROM_write_byte(3, 0xFF);
+        // watchdog will reboot
+        while(1);
+      }
+      menu(START);
+      return;
+    case START: // begin
+      osd_clear();
+      osd_show_string(4, 0, 3, "MAIN MENU");
+      break;
+  }
+
+  timeout = 20;
+  osd_show_string(2, 2, (active==1 ? 6:7), "1. EEPROM dump");
+  osd_show_string(2, 3, (active==2 ? 6:7), "2. TV5725 dump");
+  osd_show_string(2, 4, (active==3 ? 6:7), "3. Revert to original");
+  osd_enable(1);
+}
+
+void menu_none(menu_action action) {
+  if (action == START) {
+    osd_enable(0);
+  } if (action == RIGHT) {
+    menu = main_menu;
+    main_menu(START);
+  }
+}
+

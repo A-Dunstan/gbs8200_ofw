@@ -103,8 +103,9 @@ RESET:
 	;; check for up button
 	mov DPTR, #UP_BUTTON
 	movx A, @DPTR
-	jb ACC.0, 3$       ; no up button, continue to custom firmware
-	; else set EEPROM byte 3 to 0xFF and run original
+	jnb ACC.0, 3$       ; up button, set/run original firmware
+	ljmp __interrupt_vect
+3$:
 	mov DPTR, #3
 	mov A, #0xFF
 	push ACC
@@ -118,13 +119,7 @@ RESET:
 	movx A, @DPTR
 	jb ACC.0, 2$       ; no down button, continue to factory firmware
 	; else set EEPROM byte 3 to 0x82 and run custom
-	mov DPTR, #3
-	mov A, #0x82
-	push ACC
-	lcall _EEPROM_write_byte
-	dec SP
-3$:
-	ljmp __interrupt_vect
+	ajmp start_custom
 	
 2$:	
 	; pop return address
@@ -139,6 +134,14 @@ RESET:
 	lcall _config_I2C
 	setb EA     ; enable interrupts
 	ret
+	
+start_custom:
+	mov DPTR, #3
+	mov A, #0x82
+	push ACC
+	lcall _EEPROM_write_byte
+	dec SP
+	ljmp __interrupt_vect
 	
 input_hook:
 	; check if strings_base is the original english table
@@ -172,7 +175,7 @@ input_hook:
 	cjne R7, #-9, 2$
 	; else switch to new firmware
 	clr EA
-	ljmp __interrupt_vect
+	ajmp start_custom
 2$:
 	ret
 	
