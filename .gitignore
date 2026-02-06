@@ -1,0 +1,9 @@
+mtv230/*.asm
+mtv230/*.lst
+mtv230/*.rel
+mtv230/*.rst
+mtv230/*.sym
+mtv230/*.ihx
+mtv230/*.lk
+mtv230/*.map
+mtv230/*.mem
