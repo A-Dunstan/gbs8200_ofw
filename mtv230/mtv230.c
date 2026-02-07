@@ -55,8 +55,6 @@ unsigned char _sdcc_external_startup(void) {
 
   EA = 1;
 
-  menu = main_menu;
-
   return 0;
 }
 
@@ -86,6 +84,7 @@ void main() {
   __xdata uint8_t last_buttons = 0;
   __xdata uint8_t held = 0;
 
+  menu = main_menu;
   last_ms = read_tick();
   osd_init();
   init_TV5725();
