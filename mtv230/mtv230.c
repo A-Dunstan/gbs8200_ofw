@@ -43,7 +43,6 @@ unsigned char _sdcc_external_startup(void) {
   // start watchdog, 2 seconds
   WDT = 0xC0;   // WEN | WCLR
 
-  TICK_MS = 0;
   TMOD = 0x10;  // timer 1 = 16-bit timer
   TL1 = -20000 & 0xFF;
   TH1 = (-20000 >> 8) & 0xFF;
@@ -60,21 +59,14 @@ unsigned char _sdcc_external_startup(void) {
 
 uint32_t read_tick(void) __naked {
   __asm
-    mov R0, #_TICK_MS+1
-    mov A, @R0     ; byte 1
   1$:
-    inc R0
-    mov DPH, A
-    mov B, @R0     ; byte 2
-    inc R0
-    mov 7, @R0     ; byte 3
-    mov R0, #_TICK_MS
-    mov DPL, @R0   ; byte 0
-    inc R0
-    mov A, @R0     ; byte 1 (again)
+    mov A, _TICK_MS+1 ; byte 1
+    mov B, _TICK_MS+2   ; byte 2
+    mov DPH, _TICK_MS+3   ; byte 3
+    mov DPL, _TICK_MS+0 ; byte 0
     ; if not equal there was a rollover, try again
-    cjne A, DPH, 1$
-    mov A, R7
+    cjne A, _TICK_MS+1, 1$
+    xch A, DPH
     ret
   __endasm;
 }
@@ -99,25 +91,26 @@ void main() {
     WDT = 0xC0;   // WEN | WCLR
 
     uint8_t buttons = last_buttons;
-    for (i=0; i < 4; i++) {
+    for (i=0; i != 4; i++) {
+      buttons <<= 1;
       if (!(PORT5[i] & 1)) {
-        if (!(buttons & (1<<i))) {
-          buttons |= 1<<i;
+        if (!(buttons & 0x10)) {
           menu(LEFT+i);
         }
-      } else {
-        buttons &= ~(1<<i);
-        held &= ~(1<<i);
+        buttons |= 1;
       }
     }
     last_buttons = buttons;
+    held &= buttons;
 
     if (read_tick() - last_ms > 500) {
+      static __xdata uint8_t held;
 
-      buttons = held & last_buttons;
-      for (i=0; i < 4; i++) {
-        if (buttons & (1<<i))
+      buttons &= held;
+      for (i=0; i != 4; i++) {
+        if (buttons & 8)
           menu(LEFT+i);
+        buttons <<= 1;
       }
       held = last_buttons;
 
@@ -215,19 +208,19 @@ void eeprom_display(menu_action action) {
   else if (action == START) {
     osd_clear();
     osd_show_string(9, 0, 3, "EEPROM DUMP");
-    for (uint8_t y=1; y < 15; y++)
+    for (uint8_t y=1; y != 15; y++)
       osd_show_char(4, y, 6, ':');
   }
   else return;
 
-  for (uint8_t y=1; y < 15; y++) {
+  for (uint8_t y=1; y != 15; y++) {
     __xdata uint8_t buf[8];
 
     address &= 0x0FFF;
     osd_show_hex4(0, y, 6, address);
     EEPROM_read_from(buf, address, 8);
     address += 8;
-    for (uint8_t x=0; x < 8; x++) {
+    for (uint8_t x=0; x != 8; x++) {
       osd_show_hex2(6+x*3, y, 7, buf[x]);
     }
   }
@@ -243,19 +236,19 @@ typedef struct {
 } tv5725_chapter;
 
 static const tv5725_chapter chapters[] = {
-  { 0, 0, 6, "Status"},
-  { 1, 0, 6, "Input Formatter"},
-  { 2, 0, 8, "Deinterlace"},
-  { 1, 0x30, 6, "HD Bypass"},
-  { 0, 0x40, 4, "Miscellaneous"},
-  { 4, 0, 4, "Memory"},
-  { 4, 0x20, 5, "Capture & Playback"},
-  { 4, 0x40, 4, "Read & Write Fifo"},
-  { 3, 0, 14, "Video Processor"},
-  { 0, 0x90, 2, "OSD"},
-  { 1, 0x60, 6, "Mode Detect"},
-  { 5, 0, 4, "ADC"},
-  { 5, 0x20, 10, "Sync Proc"}
+  { 0, 0, 6, " 0. Status"},
+  { 1, 0, 6, " 1. Input Formatter"},
+  { 2, 0, 8, " 2. Deinterlace"},
+  { 1, 0x30, 6, " 3. HD Bypass"},
+  { 0, 0x40, 4, " 4. Miscellaneous"},
+  { 4, 0, 4, " 5. Memory"},
+  { 4, 0x20, 5, " 6. Capture - Playback"},
+  { 4, 0x40, 4, " 7. Read - Write Fifo"},
+  { 3, 0, 14, " 8. Video Processor"},
+  { 0, 0x90, 2, " 9. OSD"},
+  { 1, 0x60, 6, "10. Mode Detect"},
+  { 5, 0, 4, "11. ADC"},
+  { 5, 0x20, 10, "12. Sync Proc"}
 };
 
 void tv5725_display(menu_action action) {
@@ -287,16 +280,19 @@ void tv5725_display(menu_action action) {
   // set bank
   TV5725_write(&page->bank, 0xF0, 1);
   uint8_t reg = page->reg_begin;
-  osd_show_string(2, 0, 3, page->name);
+  osd_show_string(3, 0, 3, page->name);
 
   for (uint8_t y = 1; y <= page->rows; y++) {
     __xdata uint8_t buf[8];
 
     TV5725_read(buf, reg, 8);
-    osd_show_hex2(2, y, 6, reg);
-    osd_show_char(4, y, 6, ':');
+    osd_show_char(0, y, 6, 'S');
+    osd_show_char(1, y, 6, '0'+page->bank);
+    osd_show_char(2, y, 6, '.');
+    osd_show_hex2(3, y, 6, reg);
+    osd_show_char(5, y, 6, ':');
     for (uint8_t x = 0; x < 8; x++) {
-      osd_show_hex2(6+x*3, y, 7, buf[x]);
+      osd_show_hex2(7+x*3, y, 7, buf[x]);
     }
     reg += 8;
   }

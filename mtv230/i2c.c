@@ -43,7 +43,7 @@ void i2c_send_stop(void) __reentrant {
   NOP();NOP();
   SCL = 1;
   NOP();NOP();
-  for (uint8_t i=0; SCL==0 && i < 255; i++);
+  for (uint8_t i=255; SCL==0 && i != 0; i--);
   SDA = 1;
   NOP();NOP();
 }
@@ -56,12 +56,12 @@ void i2c_send_stop_EA(__bit oldEA) __reentrant {
 __bit i2c_send_byte(uint8_t data) __reentrant {
   uint8_t i, j;
   // send 8 bits
-  for (j=0; j < 8; j++) {
+  for (j=8; j != 0; j--) {
     SDA = data & 0x80;
     NOP();
     SCL = 1;
     NOP();NOP();NOP();NOP();
-    for (i=0; SCL==0 && i < 255; i++);
+    for (i=255; SCL==0 && i != 0; i--);
     SCL = 0;
     data <<= 1;
   }
@@ -70,7 +70,7 @@ __bit i2c_send_byte(uint8_t data) __reentrant {
   // receive ack/nak
   SCL = 1;
   NOP();NOP();NOP();NOP();
-  for (i=0; SCL==0 && i < 255; i++);
+  for (i=255; SCL==0 && i != 0; i--);
   __bit ack = !SDA;
   SCL = 0;
   return ack;
@@ -81,7 +81,7 @@ __bit i2c_send_start(uint8_t i2c_address) __reentrant {
   SDA = 1;
   NOP();NOP();
   SCL = 1;
-  for (uint8_t i=0; SCL==0 && i < 255; i++);
+  for (uint8_t i=255; SCL==0 && i != 0; i--);
   NOP();NOP();
   SDA = 0;
   NOP();NOP();
@@ -92,16 +92,15 @@ __bit i2c_send_start(uint8_t i2c_address) __reentrant {
 
 uint8_t i2c_receive_byte(__bit ack) __reentrant {
   uint8_t data = 0;
-  uint8_t i;
-  int j;
+  uint8_t i, j;
 
   SDA = 1; // pin = input
   NOP();NOP();
   // receive 8 bits
-  for (i=0; i < 8; i++) {
+  for (i=8; i != 0; i--) {
     SCL = 1;
     NOP();NOP();
-    for (j=0; SCL==0 && j < 1000; j++);
+    for (j=255; SCL==0 && j != 0; j--);
     data = (data<<1) | SDA;
     SCL = 0;
     NOP();NOP();
@@ -110,7 +109,7 @@ uint8_t i2c_receive_byte(__bit ack) __reentrant {
   SDA = !ack;
   NOP();NOP();
   SCL = 1;
-  for (j=0; SCL==0 && j < 1000; j++);
+  for (j=255; SCL==0 && j != 0; j--);
 
   NOP();NOP();
   SCL = 0;
